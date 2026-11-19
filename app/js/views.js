@@ -1,207 +1,214 @@
-// Sunset Platinum — the views: tracker, roadmap, missables, planner,
-// settings. Each view is a plain HTML string; main.js drops it into the
-// page and wires the buttons. Nothing here fetches anything.
+// Sunset Platinum — rendering for the tracker, roadmap, missables and
+// planner views (classic script; main.js wires the events). Every
+// function returns an HTML string and trophy text always passes
+// through esc() before it lands in markup.
 
-import { TROPHIES, ROADMAP_STAGES, missableTrophies, nextUpTrophies, trophyById } from "./trophies-data.js";
-import { KIND_FILTERS, KIND_LABELS, filterTrophies, gradeCounts, isSpoilerHidden, spoilerName, stageCounts } from "./filters.js";
-
-/** Escape text before it goes into the page. */
-export function escapeHtml(text) {
-  return String(text)
+function esc(value) {
+  return String(value)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 }
 
-/** The medal dot and grade word for one trophy. */
-export function gradeBadge(trophy) {
-  return `<span class="grade grade-${trophy.grade}" title="${trophy.grade} trophy">&#9679; ${trophy.grade}</span>`;
+function gradeMark(grade) {
+  return '<span class="grade grade-' + grade.toLowerCase() + '">' +
+    esc(grade) + "</span>";
 }
 
-/** The header strip: big earned count, progress bar, per-grade counters. */
-export function progressHeader(state) {
-  const earned = state.earned.length;
-  const pct = Math.round((earned / TROPHIES.length) * 100);
-  const grades = gradeCounts(TROPHIES, state);
-  const chips = Object.entries(grades)
-    .map(([grade, c]) => `<span class="count-chip"><span class="dot dot-${grade}"></span>${grade} ${c.earned}/${c.total}</span>`)
-    .join("");
-  return `<section class="progress" aria-label="Progress">
-    <div class="progress-big"><span class="big-count">${earned}<span class="big-total">/55</span></span>
-    <span class="big-label">trophies earned &middot; ${pct}% to platinum</span></div>
-    <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div>
-    <div class="count-chips">${chips}<span class="count-chip">55 total &middot; 1 platinum, 2 gold, 6 silver, 46 bronze &middot; 28 hidden on PSN</span></div>
-  </section>`;
+function trophyBadges(trophy) {
+  let out = "";
+  if (trophy.secret) {
+    out += '<span class="badge badge-secret">SECRET / HIDDEN</span>';
+  }
+  if (trophy.missable) {
+    out += '<span class="badge badge-missable">MISSABLE</span>';
+  }
+  return out;
 }
 
-/** One checklist row. Spoiler-hidden story trophies show a placeholder name. */
-export function trophyRow(trophy, state, selectedId) {
-  const earned = state.earned.includes(trophy.id);
+function splitGuide(guide) {
+  const marker = " Sources: ";
+  const at = guide.indexOf(marker);
+  if (at < 0) return { body: guide, sources: "" };
+  return {
+    body: guide.slice(0, at),
+    sources: "Sources: " + guide.slice(at + marker.length),
+  };
+}
+
+function renderProgressSummary(state, trophies, stages) {
+  const total = trophies.length;
+  const done = trophies.filter((t) => isEarned(state, t.id)).length;
+  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
+  const byGrade = earnedByGrade(state, trophies);
+  const gradeBits = ["Platinum", "Gold", "Silver", "Bronze"]
+    .map(
+      (grade) =>
+        grade + " " + byGrade.earned[grade] + "/" + byGrade.totals[grade],
+    )
+    .join(" · ");
+  const byStage = earnedByStage(state, trophies, stages)
+    .map((s) => "Stage " + s.stage + " " + s.earned + "/" + s.total)
+    .join(" · ");
+  return (
+    '<div class="progress-card">' +
+    '<div class="progress-big"><span id="earned-count">' + done +
+    '</span><span class="progress-of"> / ' + total + " earned</span></div>" +
+    '<div class="progress-bar"><div class="progress-fill" style="width:' +
+    pct + '%"></div></div>' +
+    '<div class="progress-line">' + esc(gradeBits) + "</div>" +
+    '<div class="progress-line">' + esc(byStage) + "</div>" +
+    "</div>"
+  );
+}
+
+function renderTrophyRow(trophy, state, selectedId) {
+  const earned = isEarned(state, trophy.id);
   const hidden = isSpoilerHidden(trophy, state);
-  const name = hidden ? spoilerName(trophy) : trophy.name;
-  const desc = hidden ? "Hidden until earned — turn spoilers off in Settings to peek." : trophy.description;
-  const target = trophy.psnTarget ? `<span class="target">PSN target: ${trophy.psnTarget.toLocaleString("en-US")} ${escapeHtml(trophy.psnTargetUnit || "")}</span>` : "";
-  const miss = trophy.missable ? `<span class="flag-missable">MISSABLE</span>` : "";
-  return `<li class="row ${earned ? "is-earned" : ""} ${trophy.id === selectedId ? "is-selected" : ""}" data-trophy="${trophy.id}">
-    <label class="check"><input type="checkbox" data-action="toggle" data-id="${trophy.id}" ${earned ? "checked" : ""} aria-label="Mark ${escapeHtml(name)} earned"><span class="box" aria-hidden="true">${earned ? "&#10003;" : ""}</span></label>
-    <button class="row-body" data-action="select" data-id="${trophy.id}">
-      <span class="row-name">${escapeHtml(name)} ${miss}</span>
-      <span class="row-desc">${escapeHtml(desc)}</span>
-      <span class="row-meta">${gradeBadge(trophy)} <span class="kind">${KIND_LABELS[trophy.kind]}</span> <span class="stage-tag">Roadmap stage ${trophy.stage}</span> ${target}</span>
-    </button>
-  </li>`;
+  const classes =
+    "trophy-row" + (earned ? " is-earned" : "") +
+    (trophy.id === selectedId ? " is-selected" : "");
+  return (
+    '<article class="' + classes + '" data-row="' + trophy.id + '">' +
+    '<label class="earn-box"><input type="checkbox" data-toggle="' +
+    trophy.id + '"' + (earned ? " checked" : "") +
+    ' aria-label="Mark earned"></label>' +
+    '<button type="button" class="row-main" data-detail="' + trophy.id +
+    '">' +
+    '<span class="row-top">' + gradeMark(trophy.grade) +
+    '<span class="row-name">' + esc(visibleName(trophy, state)) + "</span>" +
+    trophyBadges(trophy) + "</span>" +
+    '<span class="row-desc">' + esc(visibleDescription(trophy, state)) +
+    "</span>" +
+    '<span class="row-meta">' + trophy.points + " pts · " +
+    esc(trophy.kind) + " · stage " + trophy.stage +
+    (hidden || !trophy.target ? "" : " · " + esc(trophy.target)) +
+    "</span>" +
+    "</button></article>"
+  );
 }
 
-/** The guide pane for the selected trophy: official text, our guide, sources. */
-export function detailPane(trophy, state) {
+function renderDetail(trophy, state) {
   if (!trophy) {
-    return `<aside class="detail"><h2>Guide</h2><p class="muted">Pick a trophy on the left to read its guide. Every guide names its sources, and says plainly where a place or a step is not yet checked in the game.</p></aside>`;
+    return '<p class="detail-empty">Select a trophy to read its guide.</p>';
   }
-  const earned = state.earned.includes(trophy.id);
   const hidden = isSpoilerHidden(trophy, state);
-  const name = hidden ? spoilerName(trophy) : trophy.name;
-  const desc = hidden ? "Hidden until earned." : trophy.description;
-  const note = state.notes[trophy.id] || "";
-  // A spoiler-hidden trophy hides its guide and its missable reason too:
-  // the guide itself would give the story away.
-  const guide = hidden ? "Hidden until earned — the guide stays hidden with the trophy's name." : trophy.guide;
-  const warn = trophy.missable && !hidden
-    ? `<p class="warn"><strong>Missable.</strong> ${escapeHtml(trophy.missableReason || "")} Read the missables page before this moment passes.</p>`
-    : "";
-  const targetLine = trophy.psnTarget && !hidden
-    ? `<p class="target-line">PSN target: <strong>${trophy.psnTarget.toLocaleString("en-US")} ${escapeHtml(trophy.psnTargetUnit || "")}</strong> (PSNProfiles)</p>`
-    : "";
-  return `<aside class="detail">
-    <h2>${escapeHtml(name)}</h2>
-    <p class="detail-meta">${gradeBadge(trophy)} <span class="kind">${KIND_LABELS[trophy.kind]}</span> <span class="stage-tag">Roadmap stage ${trophy.stage}</span></p>
-    <p class="official"><span class="label">Official description</span> ${escapeHtml(desc)}</p>
-    ${targetLine}
-    ${warn}
-    <h3>Guide</h3>
-    <p class="guide">${escapeHtml(guide)}</p>
-    <p class="sources">${escapeHtml(trophy.sources)}</p>
-    <label class="check earned-line"><input type="checkbox" data-action="toggle" data-id="${trophy.id}" ${earned ? "checked" : ""}><span class="box" aria-hidden="true">${earned ? "&#10003;" : ""}</span> Earned</label>
-    <label class="note-label">Your note<textarea data-action="note" data-id="${trophy.id}" rows="2" placeholder="Where you found it, what worked…">${escapeHtml(note)}</textarea></label>
-  </aside>`;
-}
-
-/** The tracker tab: search, filter chips, checklist and guide pane. */
-export function renderTracker(state, selectedId) {
-  const list = filterTrophies(TROPHIES, state);
-  const chips = KIND_FILTERS.map((f) => `<button class="chip ${state.filter === f.key ? "is-on" : ""}" data-action="filter" data-id="${f.key}">${f.label}</button>`).join("");
-  const rows = list.map((t) => trophyRow(t, state, selectedId)).join("");
-  const selected = trophyById(selectedId) || list[0] || null;
-  return `<section class="tracker">
-    <div class="toolbar">
-      <input class="search" type="search" placeholder="Search trophies, descriptions and guides…" value="${escapeHtml(state.query || "")}" data-action="search" aria-label="Search trophies">
-      <div class="chips">${chips}</div>
-      <label class="spoiler-toggle"><input type="checkbox" data-action="spoiler" ${state.spoiler ? "checked" : ""}> Spoilers off: hide story names until earned</label>
-    </div>
-    <p class="list-count">${list.length} of 55 trophies shown &middot; ${state.earned.length} earned</p>
-    <div class="split">
-      <ul class="list">${rows || `<li class="empty">Nothing matches. Clear the search or pick another filter.</li>`}</ul>
-      ${detailPane(selected, state)}
-    </div>
-  </section>`;
-}
-
-/** The roadmap tab: five stages, each with its trophies and a progress bar. */
-export function renderRoadmap(state) {
-  const counts = stageCounts(TROPHIES, state);
-  const cards = ROADMAP_STAGES.map((stage) => {
-    const items = TROPHIES.filter((t) => t.stage === stage.n);
-    const c = counts[stage.n];
-    const pct = c.total ? Math.round((c.earned / c.total) * 100) : 0;
-    const chips = items
-      .map((t) => {
-        const earned = state.earned.includes(t.id);
-        const hidden = isSpoilerHidden(t, state);
-        return `<span class="mini ${earned ? "is-earned" : ""} ${t.missable ? "is-missable" : ""}" data-action="select" data-id="${t.id}">${escapeHtml(hidden ? spoilerName(t) : t.name)}${t.missable ? " &#9873;" : ""}</span>`;
-      })
-      .join("");
-    return `<article class="stage-card">
-      <h3>Stage ${stage.n} — ${escapeHtml(stage.title)} <span class="stage-count">${c.earned}/${c.total}</span></h3>
-      <p class="muted">${escapeHtml(stage.note)}</p>
-      <div class="bar small"><span style="width:${pct}%"></span></div>
-      <div class="minis">${chips}</div>
-    </article>`;
-  }).join("");
-  return `<section class="roadmap">
-    <p class="intro">The road to platinum, built from the official descriptions: story first, then side strands, activities, collectibles, and the heist and robbery cleanup last. A flag (&#9873;) marks a missable trophy — read its guide before the moment passes.</p>
-    ${cards}
-    <p class="muted">Platinum “Vice Got a Price!” unlocks with the other 54. “A Long Road” (100% completion) lands in stage 5, with the cleanup.</p>
-  </section>`;
-}
-
-/** The missables tab: all 12, with the reason each one can pass you by. */
-export function renderMissables(state) {
-  const items = missableTrophies();
-  const done = items.filter((t) => state.earned.includes(t.id)).length;
-  const rows = items
-    .map((t) => {
-      const earned = state.earned.includes(t.id);
-      const hidden = isSpoilerHidden(t, state);
-      return `<li class="miss-row ${earned ? "is-earned" : ""}">
-        <button class="miss-body" data-action="select" data-id="${t.id}">
-          <span class="row-name">${escapeHtml(hidden ? spoilerName(t) : t.name)} ${gradeBadge(t)}</span>
-          <span class="row-desc">${escapeHtml(t.description)}</span>
-          <span class="miss-why"><strong>Why it can be missed:</strong> ${escapeHtml(t.missableReason || "")}</span>
-        </button>
-        <label class="check"><input type="checkbox" data-action="toggle" data-id="${t.id}" ${earned ? "checked" : ""} aria-label="Mark earned"><span class="box" aria-hidden="true">${earned ? "&#10003;" : ""}</span></label>
-      </li>`;
-    })
-    .join("");
-  return `<section class="missables">
-    <p class="warn-banner"><strong>12 missable trophies — ${done} earned.</strong> No chapter select is confirmed in the official descriptions, so treat every moment below as one chance: read the guide, save first, then attempt it. Anything not listed here is earned by story progress or by a cumulative count, and can be finished later.</p>
-    <ul class="list miss-list">${rows}</ul>
-  </section>`;
-}
-
-/** The Next Up planner: the next five trophies the roadmap suggests. */
-export function renderPlanner(state) {
-  const next = nextUpTrophies(state.earned, 5);
-  if (next.length === 0) {
-    return `<section class="planner"><p class="intro">Everything is earned. The platinum is yours — congratulations, Leonida Legend.</p></section>`;
+  const earned = isEarned(state, trophy.id);
+  const parts = splitGuide(trophy.guide);
+  let out = '<div class="detail-head">' + gradeMark(trophy.grade) +
+    trophyBadges(trophy) + "</div>";
+  out += '<h2 class="detail-name">' + esc(visibleName(trophy, state)) +
+    "</h2>";
+  out += '<p class="detail-desc">' +
+    esc(visibleDescription(trophy, state)) + "</p>";
+  out += '<p class="detail-meta">' + trophy.points + " points · " +
+    esc(trophy.kind) + " · roadmap stage " + trophy.stage + " · " +
+    (earned ? "earned" : "not earned yet") + "</p>";
+  if (!hidden && trophy.target) {
+    out += '<p class="detail-target">' + esc(trophy.target) + "</p>";
   }
-  const rows = next
-    .map((t, i) => {
-      const hidden = isSpoilerHidden(t, state);
-      const why = t.missable
-        ? "Do it now — it is missable, and the moment may not come back."
-        : t.stage <= 2
-          ? "Next in the roadmap: it unlocks story or side progress you are already on."
-          : "Cheapest next win in its roadmap stage — a count that builds while you play.";
-      return `<li class="next-row">
-        <span class="next-rank">${i + 1}</span>
-        <button class="miss-body" data-action="select" data-id="${t.id}">
-          <span class="row-name">${escapeHtml(hidden ? spoilerName(t) : t.name)} ${gradeBadge(t)}</span>
-          <span class="row-desc">${escapeHtml(hidden ? "Hidden until earned." : t.description)}</span>
-          <span class="miss-why"><strong>Why next:</strong> ${why} Roadmap stage ${t.stage}.</span>
-        </button>
-      </li>`;
-    })
-    .join("");
-  return `<section class="planner">
-    <p class="intro">Next up, in roadmap order — earliest stage first, missables before the rest. Tick one off and the list re-sorts itself.</p>
-    <ol class="next-list">${rows}</ol>
-  </section>`;
+  if (!hidden && trophy.missable && trophy.missableReason) {
+    out += '<div class="detail-missable"><strong>Why missable:</strong> ' +
+      esc(trophy.missableReason) + "</div>";
+  }
+  if (hidden) {
+    out += '<p class="detail-guide">Guide hidden by the spoiler setting ' +
+      "until this story trophy is earned.</p>";
+  } else {
+    out += '<p class="detail-guide">' + esc(parts.body) + "</p>";
+    if (parts.sources) {
+      out += '<p class="detail-sources">' + esc(parts.sources) + "</p>";
+    }
+  }
+  out += '<label class="note-label" for="note-input">Your note</label>' +
+    '<textarea id="note-input" data-note="' + trophy.id +
+    '" rows="3" placeholder="Progress, counts, where you left off">' +
+    esc(state.notes[String(trophy.id)] ?? "") + "</textarea>";
+  return out;
 }
 
-/** The settings tab: spoiler setting, export, import, reset, and sources. */
-export function renderSettings(state) {
-  return `<section class="settings">
-    <h2>Settings &amp; your save</h2>
-    <label class="spoiler-toggle big"><input type="checkbox" data-action="spoiler" ${state.spoiler ? "checked" : ""}> Spoilers off — hide story trophy names and descriptions until earned (28 trophies are hidden on PSN until earned)</label>
-    <div class="save-row">
-      <button class="btn" data-action="export">Export progress (.json)</button>
-      <label class="btn file-btn">Import progress<input type="file" accept=".json,application/json" data-action="import" hidden></label>
-      <button class="btn danger" data-action="reset">Reset progress</button>
-    </div>
-    <p class="muted" id="save-note">Progress is saved in this browser (localStorage). Export keeps a copy as a file; import restores one. ${state.earned.length} of 55 earned.</p>
-    <h2>Where the facts come from</h2>
-    <p>Names, descriptions and grades are the official PlayStation list, as Exophase and PSNProfiles listed it before this guide was built; the two agree on every name, description and grade. PSN counts (250 stunts, 42 Shooting Range challenges, and the rest) come from PSNProfiles. Every guide is written for this entry, in our own words, from the official description — and where a place or a step cannot be pinned down from the description, the guide says “not yet checked in the game” instead of guessing. No Rockstar logo or artwork is used; the look is our own. This guide works fully offline: it loads only its own files and makes no network request.</p>
-    <h2>Keyboard</h2>
-    <p class="muted">Press <kbd>/</kbd> to search, <kbd>1</kbd>–<kbd>5</kbd> to switch tabs (Tracker, Roadmap, Missables, Next Up, Settings).</p>
-  </section>`;
+function renderRoadmap(state, trophies, stages) {
+  const byStage = earnedByStage(state, trophies, stages);
+  let out = '<h2 class="view-title">Roadmap to the Platinum</h2>' +
+    '<p class="view-sub">Five stages built from the official ' +
+    "descriptions: story first with its one-time moments, counted " +
+    "grinds in the middle, finale and 100 percent last.</p>";
+  for (const stageInfo of stages) {
+    const progress = byStage.find((s) => s.stage === stageInfo.stage);
+    const inStage = trophies.filter((t) => t.stage === stageInfo.stage);
+    out += '<section class="stage-card"><h3>Stage ' + stageInfo.stage +
+      ": " + esc(stageInfo.title) + ' <span class="stage-count">' +
+      progress.earned + "/" + progress.total + " earned</span></h3>" +
+      '<p class="stage-summary">' + esc(stageInfo.summary) + "</p><ul>";
+    for (const trophy of inStage) {
+      out += "<li>" + (isEarned(state, trophy.id) ? "✓ " : "· ") +
+        "<strong>" + esc(visibleName(trophy, state)) + "</strong> — " +
+        esc(visibleDescription(trophy, state)) +
+        (trophy.missable ? ' <span class="badge badge-missable">' +
+          "MISSABLE</span>" : "") + "</li>";
+    }
+    out += "</ul></section>";
+  }
+  return out;
+}
+
+function renderMissables(state, trophies) {
+  const list = trophies.filter((t) => t.missable);
+  let out = '<h2 class="view-title">Missables — ' + list.length +
+    " trophies</h2>" +
+    '<p class="view-sub">Every missable flag below is derived from the ' +
+    "trophy's own official description, quoted in each card. Keep a " +
+    "manual save before story missions and none of these should need " +
+    "a second playthrough.</p>";
+  for (const trophy of list) {
+    const hidden = isSpoilerHidden(trophy, state);
+    out += '<article class="missable-card"><div class="missable-top">' +
+      gradeMark(trophy.grade) + "<strong>" +
+      esc(visibleName(trophy, state)) + "</strong>" +
+      '<span class="badge badge-secret">' +
+      (trophy.secret ? "SECRET / HIDDEN" : "VISIBLE") + "</span></div>" +
+      '<p class="missable-desc">Official description: ' +
+      esc(visibleDescription(trophy, state)) + "</p>";
+    if (hidden) {
+      out += '<p class="missable-reason">Reason hidden by the spoiler ' +
+        "setting until earned.</p>";
+    } else {
+      out += '<p class="missable-reason">' +
+        esc(trophy.missableReason ?? "") + "</p>";
+    }
+    out += '<p class="missable-stage">Roadmap stage ' + trophy.stage +
+      " · " + (isEarned(state, trophy.id) ? "earned" : "not earned yet") +
+      "</p></article>";
+  }
+  return out;
+}
+
+function renderPlanner(state, trophies, suggestions) {
+  let out = '<h2 class="view-title">Next Up — your next 5 trophies</h2>' +
+    '<p class="view-sub">The planner puts missable trophies first ' +
+    "because they can be lost, then the earliest open roadmap stage. " +
+    "Earn one and the list re-plans itself.</p>";
+  if (suggestions.length === 0) {
+    out += '<p class="planner-done">All 55 earned. Leonida legend.</p>';
+    return out;
+  }
+  out += '<ol class="planner-list">';
+  for (const trophy of suggestions) {
+    const hidden = isSpoilerHidden(trophy, state);
+    out += '<li class="planner-item"><div class="planner-top">' +
+      gradeMark(trophy.grade) + "<strong>" +
+      esc(visibleName(trophy, state)) + "</strong>" +
+      trophyBadges(trophy) + "</div>" +
+      '<p class="planner-desc">' +
+      esc(visibleDescription(trophy, state)) + "</p>" +
+      '<p class="planner-reason">' +
+      esc(hidden ? "Details hidden by the spoiler setting." :
+        plannerReason(trophy)) + "</p>" +
+      (hidden || !trophy.target ? "" :
+        '<p class="planner-target">' + esc(trophy.target) + "</p>") +
+      "</li>";
+  }
+  out += "</ol>";
+  return out;
 }

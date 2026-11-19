@@ -1,15 +1,59 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sunset Platinum — GTA 6 Trophy Guide &amp; Tracker</title>
-<meta name="description" content="The offline guide and tracker for all 55 Grand Theft Auto VI trophies on PlayStation 5: cited guides, a roadmap to platinum, missables, and saved progress.">
+<title>Sunset Platinum — GTA VI Trophy Guide and Tracker</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="app"><p class="loading">Loading the trophy guide…</p></div>
-<script type="module" src="js/main.js"></script>
-<noscript><p class="loading">This guide needs JavaScript: it is a tracker, and the checklist lives in your browser.</p></noscript>
+<header class="site-head">
+  <div class="head-inner">
+    <div>
+      <h1 class="site-title">Sunset Platinum</h1>
+      <p class="site-sub">Grand Theft Auto VI · PS5 trophy guide and tracker · all 55 trophies: 1 Platinum, 2 Gold, 6 Silver, 46 Bronze · works fully offline</p>
+    </div>
+    <div id="progress-slot"></div>
+  </div>
+  <nav class="view-nav" aria-label="Views">
+    <button type="button" data-nav="tracker">Tracker</button>
+    <button type="button" data-nav="roadmap">Roadmap</button>
+    <button type="button" data-nav="missables">Missables</button>
+    <button type="button" data-nav="planner">Next Up planner</button>
+  </nav>
+  <div class="controls">
+    <label class="search-label">Search
+      <input id="search-input" type="search" placeholder="Name, description, guide text">
+    </label>
+    <div id="filter-chips" class="chip-row" role="group" aria-label="Filters"></div>
+    <label class="spoiler-label"><input id="spoiler-toggle" type="checkbox"> Spoiler shield: hide story trophies until earned</label>
+    <button type="button" id="export-button">Export progress</button>
+    <label class="import-label">Import progress
+      <input id="import-file" type="file" accept=".json,application/json">
+    </label>
+    <span id="import-status" role="status"></span>
+  </div>
+  <p class="keys-hint">Keys: 1-4 switch views · / focuses search · S toggles the spoiler shield</p>
+</header>
+<main>
+  <section id="tracker-view">
+    <p id="list-count" class="list-count"></p>
+    <div class="tracker-grid">
+      <div id="trophy-list" class="trophy-list"></div>
+      <aside id="detail-panel" class="detail-panel" aria-live="polite"></aside>
+    </div>
+  </section>
+  <section id="roadmap-view" hidden></section>
+  <section id="missables-view" hidden></section>
+  <section id="planner-view" hidden></section>
+</main>
+<footer class="site-foot">
+  <p>Sunset Platinum is an original, unofficial fan guide. Trophy names and descriptions are shown as PlayStation publishes them; every guide is written for this entry and names its sources. No Rockstar Games logo or artwork is used.</p>
+</footer>
+<script src="js/trophies-data.js"></script>
+<script src="js/store.js"></script>
+<script src="js/filters.js"></script>
+<script src="js/views.js"></script>
+<script src="js/main.js"></script>
 </body>
 </html>

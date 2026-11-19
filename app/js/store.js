@@ -1,121 +1,113 @@
-// Sunset Platinum — saved progress.
-// One localStorage key holds everything the tracker remembers: which
-// trophies are earned, the reader's notes, and the spoiler setting.
-// Export writes that state to a file; import reads one back. Nothing
-// here touches the network, and nothing leaves the browser unless the
-// reader asks for an export.
+// Sunset Platinum — progress store (classic script, loads before
+// filters.js, views.js and main.js; shares the page's global scope).
+//
+// All tracker state lives in one localStorage record: which trophies
+// are earned, the free-text note per trophy and the spoiler setting.
+// Export serialises that record to JSON and import restores it, so a
+// round trip through a file loses nothing.
 
-export const STORAGE_KEY = "sunset-platinum-v1";
+const STORAGE_KEY = "sunset-platinum-tracker-v2";
 
-/** The fresh state for a reader who has never used the guide. */
-export function freshState() {
-  return { earned: [], notes: {}, spoiler: true, filter: "all", query: "" };
+function emptyState() {
+  return { earned: {}, notes: {}, spoiler: false };
 }
 
-/** Read the saved state, falling back to fresh state on any bad data. */
-export function loadState() {
+function loadState() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return freshState();
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.earned)) return freshState();
-    return {
-      earned: parsed.earned.filter((n) => Number.isInteger(n)),
-      notes: parsed.notes && typeof parsed.notes === "object" ? parsed.notes : {},
-      spoiler: parsed.spoiler !== false,
-      filter: typeof parsed.filter === "string" ? parsed.filter : "all",
-      query: typeof parsed.query === "string" ? parsed.query : "",
-    };
+    const raw = globalThis.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return emptyState();
+    return normaliseState(JSON.parse(raw));
   } catch {
-    return freshState();
+    return emptyState();
   }
 }
 
-/** Persist the state. */
-export function saveState(state) {
+function normaliseState(value) {
+  const state = emptyState();
+  if (value && typeof value === "object") {
+    if (value.earned && typeof value.earned === "object") {
+      for (const key of Object.keys(value.earned)) {
+        if (value.earned[key]) state.earned[key] = true;
+      }
+    }
+    if (value.notes && typeof value.notes === "object") {
+      for (const key of Object.keys(value.notes)) {
+        const note = value.notes[key];
+        if (typeof note === "string" && note.length > 0) {
+          state.notes[key] = note;
+        }
+      }
+    }
+    state.spoiler = value.spoiler === true;
+  }
+  return state;
+}
+
+function saveState(state) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    globalThis.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
-    // A full or blocked store must not break the guide.
+    // Storage can be unavailable (private mode, file quotas). The
+    // tracker keeps working in memory for the session.
   }
 }
 
-/** Flip one trophy's earned flag and save. */
-export function toggleEarned(state, id) {
-  const at = state.earned.indexOf(id);
-  if (at >= 0) state.earned.splice(at, 1);
-  else state.earned.push(id);
-  saveState(state);
-  return state;
+function isEarned(state, trophyId) {
+  return state.earned[String(trophyId)] === true;
 }
 
-/** Save a reader's note on one trophy. */
-export function setNote(state, id, text) {
-  if (text.trim() === "") delete state.notes[id];
-  else state.notes[id] = text;
+function toggleEarned(state, trophyId) {
+  const key = String(trophyId);
+  if (state.earned[key]) delete state.earned[key];
+  else state.earned[key] = true;
   saveState(state);
-  return state;
+  return isEarned(state, trophyId);
 }
 
-/** The state as a file's text, for export. */
-export function exportText(state) {
+function setNote(state, trophyId, text) {
+  const key = String(trophyId);
+  if (text && text.trim().length > 0) state.notes[key] = text;
+  else delete state.notes[key];
+  saveState(state);
+}
+
+function setSpoiler(state, on) {
+  state.spoiler = on === true;
+  saveState(state);
+}
+
+function exportStateJson(state) {
   return JSON.stringify(
-    { app: "sunset-platinum", game: "Grand Theft Auto VI", exportedAt: new Date().toISOString(), earned: state.earned, notes: state.notes },
+    {
+      app: "sunset-platinum",
+      version: 2,
+      earned: state.earned,
+      notes: state.notes,
+      spoiler: state.spoiler,
+    },
     null,
     2,
   );
 }
 
-/** Parse an imported file's text into a state. Returns null when it is not our export. */
-export function importText(text) {
-  try {
-    const parsed = JSON.parse(text);
-    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.earned)) return null;
-    const earned = parsed.earned.filter((n) => Number.isInteger(n) && n >= 1 && n <= 55);
-    const notes = parsed.notes && typeof parsed.notes === "object" ? parsed.notes : {};
-    const cleanNotes = {};
-    for (const [k, v] of Object.entries(notes)) {
-      if (Number.isInteger(Number(k)) && typeof v === "string") cleanNotes[k] = v.slice(0, 2000);
-    }
-    return { earned, notes: cleanNotes };
-  } catch {
-    return null;
-  }
+function importStateJson(text) {
+  return normaliseState(JSON.parse(text));
 }
 
-/** Wipe the saved state entirely. */
-export function resetState() {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // Ignore a store we cannot clear.
+function earnedByGrade(state, trophies) {
+  const totals = { Platinum: 0, Gold: 0, Silver: 0, Bronze: 0 };
+  const earned = { Platinum: 0, Gold: 0, Silver: 0, Bronze: 0 };
+  for (const trophy of trophies) {
+    totals[trophy.grade] += 1;
+    if (isEarned(state, trophy.id)) earned[trophy.grade] += 1;
   }
-  return freshState();
+  return { totals, earned };
 }
 
-/** Apply a screenshot / deep-link seed from the page's URL, if one is given.
- *  ?seed=2,3,8 earns those trophies, ?view=roadmap picks a tab,
- *  ?detail=17 opens a trophy's guide, ?spoiler=on|off sets the setting.
- *  A seed replaces the stored earned list, so a shared link shows the
- *  same progress its maker saw. */
-export function applyUrlSeed(state) {
-  const params = new URLSearchParams(window.location.search);
-  const out = { view: null, detail: null };
-  const seed = params.get("seed");
-  if (seed !== null) {
-    state.earned = seed.split(",").map((s) => Number.parseInt(s, 10)).filter((n) => Number.isInteger(n) && n >= 1 && n <= 55);
-    saveState(state);
-  }
-  const view = params.get("view");
-  if (view) out.view = view;
-  const detail = params.get("detail");
-  if (detail) out.detail = Number.parseInt(detail, 10);
-  const spoiler = params.get("spoiler");
-  if (spoiler === "on" || spoiler === "off") {
-    state.spoiler = spoiler === "on";
-    saveState(state);
-  }
-  const search = params.get("search");
-  if (search) state.query = search;
-  return out;
+function earnedByStage(state, trophies, stages) {
+  return stages.map((stageInfo) => {
+    const inStage = trophies.filter((t) => t.stage === stageInfo.stage);
+    const done = inStage.filter((t) => isEarned(state, t.id)).length;
+    return { stage: stageInfo.stage, total: inStage.length, earned: done };
+  });
 }

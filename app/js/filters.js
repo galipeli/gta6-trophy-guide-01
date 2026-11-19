@@ -1,80 +1,97 @@
-// Sunset Platinum — filtering, searching and the spoiler rule.
-// One place owns how the list is narrowed, so the tracker, the roadmap
-// and the planner all agree on what "earned" and "hidden" mean.
+// Sunset Platinum — filtering, the spoiler rule and the Next Up
+// planner (classic script; uses isEarned from store.js at call time).
+//
+// Kinds follow the brief: story, missable, collectibles, activities.
+// Missable is a flag on top of a kind, earned and todo cut across all
+// kinds. The spoiler rule hides a story trophy's name, description,
+// guide, missable reason and PSN target until that trophy is earned.
 
-/** The filter chips the tracker offers, in order. */
-export const KIND_FILTERS = [
+const KIND_FILTERS = [
   { key: "all", label: "All 55" },
   { key: "story", label: "Story" },
   { key: "missable", label: "Missable" },
   { key: "collectibles", label: "Collectibles" },
   { key: "activities", label: "Activities" },
-  { key: "side", label: "Side strands" },
-  { key: "heist", label: "Heists" },
   { key: "earned", label: "Earned" },
-  { key: "todo", label: "Still to earn" },
+  { key: "todo", label: "To do" },
 ];
 
-/** Human labels for the trophy kinds. */
-export const KIND_LABELS = {
-  story: "Story",
-  side: "Side strand",
-  activities: "Activity",
-  collectibles: "Collectible",
-  heist: "Heist",
-};
-
-/** Grade order for sorting and for the progress counters. */
-export const GRADES = ["platinum", "gold", "silver", "bronze"];
-
-/** Narrow the trophy list by kind filter, search text and earned state. */
-export function filterTrophies(trophies, state) {
-  const query = (state.query || "").trim().toLowerCase();
-  return trophies.filter((t) => {
-    if (state.filter === "missable" && !t.missable) return false;
-    if (state.filter === "earned" && !state.earned.includes(t.id)) return false;
-    if (state.filter === "todo" && state.earned.includes(t.id)) return false;
-    if (["story", "collectibles", "activities", "side", "heist"].includes(state.filter) && t.kind !== state.filter) return false;
-    if (query) {
-      const hay = `${t.name} ${t.description} ${t.guide}`.toLowerCase();
-      if (!hay.includes(query)) return false;
-    }
-    return true;
-  });
+function matchesKindFilter(trophy, filterKey, state) {
+  if (filterKey === "all") return true;
+  if (filterKey === "missable") return trophy.missable === true;
+  if (filterKey === "earned") return isEarned(state, trophy.id);
+  if (filterKey === "todo") return !isEarned(state, trophy.id);
+  return trophy.kind === filterKey;
 }
 
-/** The spoiler rule: a story trophy the reader has not earned yet hides
- *  its name and description while spoilers are on. Its grade, kind and
- *  guide button stay visible, so the list never looks broken. */
-export function isSpoilerHidden(trophy, state) {
-  return state.spoiler && trophy.kind === "story" && !state.earned.includes(trophy.id);
+function matchesSearch(trophy, query) {
+  const needle = query.trim().toLowerCase();
+  if (needle.length === 0) return true;
+  const haystack = [
+    trophy.name,
+    trophy.description,
+    trophy.guide,
+    trophy.grade,
+    trophy.kind,
+    trophy.target ?? "",
+  ]
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(needle);
 }
 
-/** What the list shows for a hidden trophy instead of its real name. */
-export function spoilerName(trophy) {
-  return `Hidden story trophy #${trophy.id}`;
+function filterTrophies(trophies, filterKey, query, state) {
+  return trophies.filter(
+    (trophy) =>
+      matchesKindFilter(trophy, filterKey, state) &&
+      matchesSearch(trophy, query),
+  );
 }
 
-/** Earned counts per grade, for the progress counters. */
-export function gradeCounts(trophies, state) {
-  const out = {};
-  for (const grade of GRADES) {
-    out[grade] = {
-      total: trophies.filter((t) => t.grade === grade).length,
-      earned: trophies.filter((t) => t.grade === grade && state.earned.includes(t.id)).length,
-    };
+function isSpoilerHidden(trophy, state) {
+  return (
+    state.spoiler === true &&
+    trophy.kind === "story" &&
+    !isEarned(state, trophy.id)
+  );
+}
+
+function visibleName(trophy, state) {
+  return isSpoilerHidden(trophy, state) ? "Hidden story trophy" : trophy.name;
+}
+
+function visibleDescription(trophy, state) {
+  return isSpoilerHidden(trophy, state)
+    ? "Hidden until earned (spoiler setting is on)."
+    : trophy.description;
+}
+
+// Next Up planner: five suggestions, missable trophies first because
+// they can be lost, then the earliest roadmap stage, then the lowest
+// stage order in the official list. Platinum comes last by design: it
+// unlocks itself once everything else is done.
+function nextUp(trophies, state, limit = 5) {
+  const remaining = trophies.filter((t) => !isEarned(state, t.id));
+  const score = (trophy) => {
+    let value = 0;
+    if (trophy.missable) value -= 1000;
+    value += trophy.stage * 10;
+    if (trophy.kind === "platinum") value += 500;
+    value += trophy.id / 100;
+    return value;
+  };
+  return remaining
+    .slice()
+    .sort((a, b) => score(a) - score(b))
+    .slice(0, limit);
+}
+
+function plannerReason(trophy) {
+  if (trophy.missable) {
+    return "Missable: secure it before the story moves past its moment.";
   }
-  return out;
-}
-
-/** Earned counts per roadmap stage, for the roadmap's progress bars. */
-export function stageCounts(trophies, state) {
-  const out = {};
-  for (let n = 1; n <= 5; n++) {
-    out[n] = {
-      total: trophies.filter((t) => t.stage === n).length,
-      earned: trophies.filter((t) => t.stage === n && state.earned.includes(t.id)).length,
-    };
+  if (trophy.kind === "platinum") {
+    return "Unlocks itself when the other 54 are earned.";
   }
-  return out;
+  return "Earliest open roadmap stage: stage " + trophy.stage + ".";
 }
