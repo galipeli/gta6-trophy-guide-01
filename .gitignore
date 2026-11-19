@@ -1,2 +1,19 @@
-out
-out2
+# Dependencies
+node_modules/
+
+# Build output
+output/
+dist/
+build/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
